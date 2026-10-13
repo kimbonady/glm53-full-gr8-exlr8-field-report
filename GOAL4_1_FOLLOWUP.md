@@ -1,0 +1,28 @@
+# Goal 4.1 follow-up: GR8 TP4 sharing, cache, cancellation and tools
+
+**Test date:** 12 October 2026. This is a separate, targeted follow-up to the [original field report](README.md). It does not replace that report's paired GR8-versus-TensorFold quality scores or its original GR8 version pin.
+
+## Reproducibility boundary
+
+We ran three TP4 boots on the same four-node switchless GB10 DGX Spark ring, using GR8 source commit `5670fb6ed55a8ff4c8c2c913be0afa6a2b006ba4`, pinned arm64 OCI digest `sha256:781151dea2237d8b07c47df05c6ba20ad9920b9e2486c643da8bd1903271a311`, the same pinned EXLR8 `home` weights as the original report, MTP2 and KV tier off. The relevant scheduler profile used `SHARE_LIMIT=65536`, `CAP=196608` and `SESS=2`. Results below are local client traces cross-checked with native S2 logs and host telemetry. A deterministic extractor checked 21 benchmark runs and eight targeted agentic runs against archived raw records. The raw traces remain local.
+
+| Test | Observed result | Interpretation |
+| --- | --- | --- |
+| 32K prefix A/A/B/A | Client time to first token: **23.582 / 0.164 / 23.475 / 0.161 s**. Native S2 logged a retained **31,993-token** hit on the return to A after B. A subsequent tool continuation succeeded. | The return to A stayed hot in this working set. The original pin had missed after an intervening conversation. This is one targeted run, not a general cache-retention guarantee. |
+| Two concurrent 64K histories | Each request had 63,998 prompt tokens, 2,048 reserved output tokens and four guard tokens: **66,050 reserved per request**, 514 above `SHARE_LIMIT`. Their combined 132,100 reservation was below `CAP`. Across 631 valid scheduler samples, at most one was running while one waited; SSE generation never overlapped. | Serialization is **consistent with the documented per-request sharing threshold**. Combined CAP alone does not imply shared decode. This test does not show a scheduler violation. |
+| Just below `SHARE_LIMIT` | **Not booted.** Extrapolated minimum available memory at the required KV pool was **6.38 GiB**, below our 8 GiB safety floor. | No measured claim about concurrency just below the threshold. This memory result is a projection and a safety stop. |
+| Disconnect during cold 32K prefill | Idle/abort was reached **24.460 s** after client disconnect. The immediately submitted short recovery request had **24.458 s** time to first token. | Our five-second prefill-cancellation gate still failed. Decode-phase cancellation had passed in the earlier campaign. |
+| Long C1 generation | Three 1,024-token `high` runs: **33.542 / 33.900 / 33.946 tokens/s** (median 33.900). The earlier GR8 `home` control was near 34 tokens/s. | No new throughput gain from this revision is established. C2/C4 runs had different emitted lengths and remain descriptive. |
+| Visible output and Docker task | Four previously problematic C1 prompts each consumed 1,024 completion tokens with **zero visible characters**. The targeted Docker task failed its final executable oracle at both 2,048 and 4,096 output-token budgets on **two boots**, with both historical top-level `none` and explicit low-effort template kwargs (all four variants per boot failed). | Internal token production is not useful answer throughput. The Docker failure is not explained solely by top-level effort mapping or by the 2,048-token budget. |
+
+The pinned Rust frontend's top-level `reasoning_effort=none/low/high` requests rendered as `Max` in the EXLR8 chat template, while explicit template kwargs did render `Low` and `High`. The pinned frontend also accepted unsupported non-text `response_format` values without enforcing that output contract. These findings concern the **delivered frontend and engine combination**, not an intrinsic accuracy ranking of EXLR8 against EXL3.
+
+The original 8-case and 40-case quality scores in the [main report](README.md#functional-quality-distinguish-answer-content-from-output-contract) remain unchanged. We did **not** replay those corpora on this newer pin: the frontend, Docker-task and prefill-cancellation gates failed first. Goal 4.1 therefore has no new global quality score.
+
+## Upstream changes and next checks
+
+[GR8 PR #41](https://github.com/kindlingai/gr8/pull/41) merged **after** the GPU image above was pinned. On a separate source copy, its 37 Rust tests and 21 CPU-mock HTTP checks passed: unsupported no-thinking/JSON requests receive explicit errors, and top-level effort mapping is changed. We did **not** qualify a PR #41 OCI image on the four GPUs. Those CPU checks cannot repair or invalidate the GPU observations above. We also posted a [focused follow-up to issue #39](https://github.com/kindlingai/gr8/issues/39#issuecomment-6132742957).
+
+The useful next GPU sequence is: pin a post-PR #41 image; verify the frontend's rendered effort and JSON/tool contracts; recheck visible C1 output and the complete Docker task; measure prefill cancellation; then, only within the 8 GiB memory guard, probe both sides of `SHARE_LIMIT` with explicit output reservations. If those gates pass, rerun the frozen 8+40 corpus with its original oracles and a clearly labeled new version arm. Prefix tests should vary the working set and distinguish S2 log hits from client time to first token; the available `/metrics` cache counters did not supply usable hit evidence in this campaign.
+
+**Decision:** GR8 remains an experimental short-session option, while the locally qualified TensorFold Full 3.0 bpw MTP3 profile remains our general Full reference. The 32K return-to-A cache result is a targeted improvement; long-history concurrency below the new threshold, prompt prefill cancellation, the frontend contract and task-level reliability remain open.

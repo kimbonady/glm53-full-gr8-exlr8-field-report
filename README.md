@@ -4,6 +4,8 @@
 **Purpose:** Share reproducible observations and actionable follow-up tests with engine developers.  
 **Scope:** Four NVIDIA GB10 DGX Spark nodes, 128 GiB unified memory each, connected as a switchless RoCE ring. All reported measurements are from this cluster. Published benchmark claims from other systems are excluded.
 
+**Follow-up (12 October 2026):** We tested a newer pinned GR8 build on three additional TP4 boots. A 32K conversation remained cached after an intervening conversation, while prefill cancellation and the targeted Docker task still failed their gates. The two 64K requests each reserved 66,050 tokens, above that build's `SHARE_LIMIT=65536`; their serialization is consistent with the documented rule. See the [Goal 4.1 follow-up](GOAL4_1_FOLLOWUP.md) for pins, measurements, memory limits and the separate status of PR #41. The original paired quality scores below were not rerun on the newer build.
+
 ## Executive summary
 
 GR8 at the pinned revision below ran GLM-5.3 Full EXLR8 over its native, two-rail verbs transport on our existing TP4 ring. On a matched 1,024-token single-stream generation plan, GR8 home delivered a median **34.025 completion tokens/s**, versus **27.731 tokens/s** for our TensorFold Full EXL3 3.0 bpw MTP3 profile: a **1.227×** client-observed ratio. Cold-prompt time to first token was also lower for GR8 on the matched 8K and 16K plans. These are useful results for short, controlled sessions.
